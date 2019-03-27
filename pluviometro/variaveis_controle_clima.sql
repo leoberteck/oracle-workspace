@@ -1,0 +1,132 @@
+CREATE TABLE CFG_CONTROLE_VARIAVEIS_CLIMA (
+  CD_ID NUMBER NOT NULL PRIMARY KEY,
+  DESCRICAO VARCHAR2(500),
+  COLUNA VARCHAR2(30) NOT NULL ,
+  MIN NUMBER DEFAULT 0 NOT NULL,
+  MAX NUMBER DEFAULT 0 NOT NULL
+);
+
+CREATE SEQUENCE SEQ_CONTROLE_VAR_CLIMA_PK
+  START WITH 1 INCREMENT BY 1;
+
+CREATE OR REPLACE TRIGGER TRG_BI_CONTROLE_VAR_CLIMA
+  BEFORE INSERT ON CFG_CONTROLE_VARIAVEIS_CLIMA
+  FOR EACH ROW
+BEGIN
+  :NEW.CD_ID := SEQ_CONTROLE_VAR_CLIMA_PK.nextval;
+END;
+
+INSERT ALL
+  INTO CFG_CONTROLE_VARIAVEIS_CLIMA (DESCRICAO, COLUNA, MIN, MAX) VALUES ('Chuva em milimetros por hora', 'VL_CHUVA', 0, 100)
+  INTO CFG_CONTROLE_VARIAVEIS_CLIMA (DESCRICAO, COLUNA, MIN, MAX) VALUES ('Velocidade do vento em Kilometros por hora', 'VL_VEL_VENTO', 0, 300)
+  INTO CFG_CONTROLE_VARIAVEIS_CLIMA (DESCRICAO, COLUNA, MIN, MAX) VALUES ('Umidade do ar em %', 'VL_UMIDADE', 0, 100)
+SELECT 1 FROM DUAL;
+COMMIT;
+
+CREATE OR REPLACE PROCEDURE PRC_NORMALIZA_VARIAVEIS(CD_ID NUMBER) IS
+  vl_template VARCHAR2(1000);
+  CURSOR cr_variaveis IS SELECT * FROM CFG_CONTROLE_VARIAVEIS_CLIMA;
+  r_variavel cr_variaveis%ROWTYPE;
+  v_tratamento VARCHAR2(50);
+BEGIN
+  OPEN cr_variaveis;
+  LOOP FETCH cr_variaveis INTO r_variavel;
+    EXIT WHEN cr_variaveis%NOTFOUND;
+
+    SELECT
+      CASE DATA_TYPE
+        WHEN 'NVARCHAR2' THEN 'TO_NCHAR( '
+        WHEN 'VARCHAR2' THEN 'TO_CHAR( '
+        ELSE '( ' END AS TRATAMENTO
+    INTO v_tratamento
+    FROM USER_TAB_COLUMNS
+    WHERE TABLE_NAME = 'DDN_PLUVIOMETRO' AND COLUMN_NAME = r_variavel.COLUNA;
+
+    vl_template :=
+    'UPDATE DDN_PLUVIOMETRO SET ' || r_variavel.COLUNA || ' = (
+       SELECT
+           CASE
+           WHEN dp.' || r_variavel.COLUNA || ' > ccvc.MAX
+               THEN ' || v_tratamento || 'ccvc.MAX)
+           WHEN dp.'|| r_variavel.COLUNA || ' < ccvc.MIN
+               THEN ' || v_tratamento || 'ccvc.MIN)
+           ELSE dp.' || r_variavel.COLUNA || ' END AS CORRIGIDO
+       FROM DDN_PLUVIOMETRO dp
+           JOIN CFG_CONTROLE_VARIAVEIS_CLIMA ccvc ON (ccvc.COLUNA = ''' || r_variavel.COLUNA || ''')
+       WHERE dp.CD_ID = ' || CD_ID || ')
+    WHERE CD_ID = ' || CD_ID;
+    EXECUTE IMMEDIATE vl_template;
+  END LOOP;
+  CLOSE cr_variaveis;
+END;
+
+SELECT * FROM CFG_CONTROLE_VARIAVEIS_CLIMA;
+
+CALL PRC_NORMALIZA_VARIAVEIS(2669296);
+
+UPDATE DDN_PLUVIOMETRO
+SET VL_CHUVA = (
+  SELECT CASE
+         WHEN dp.VL_CHUVA > ccvc.MAX
+           THEN TO_NCHAR(ccvc.MAX)
+         WHEN dp.VL_CHUVA < ccvc.MIN
+           THEN TO_NCHAR(ccvc.MIN)
+         ELSE dp.VL_CHUVA END AS CORRIGIDO
+  FROM DDN_PLUVIOMETRO dp
+    JOIN CFG_CONTROLE_VARIAVEIS_CLIMA ccvc ON (ccvc.COLUNA = 'VL_CHUVA')
+  WHERE dp.CD_ID = 2669296)
+WHERE CD_ID = 2669296;
+
+SELECT
+  COLUMN_NAME,
+  DATA_TYPE
+FROM USER_TAB_COLUMNS
+WHERE TABLE_NAME = 'DDN_PLUVIOMETRO'
+      AND COLUMN_NAME IN
+          ('VL_VEL_VENTO', 'VL_CHUVA', 'VL_UMIDADE', 'VL_RADIACAO_SOLAR', 'VL_PONTO_ORVALHO', 'VL_PRESSAO_ATMOSFERICA', 'VL_DIRECAO_VENTO', 'VL_TEMPERATURA', 'VL_UMIDADE_SOLO', 'VL_UMIDADE_SOLO_2');
+
+
+UPDATE DDN_PLUVIOMETRO SET VL_CHUVA = (
+   SELECT
+       CASE
+       WHEN dp.VL_CHUVA > ccvc.MAX
+           THEN ccvc.MAX
+       WHEN dp.VL_CHUVA < ccvc.MIN
+           THEN ccvc.MIN
+       ELSE dp.VL_CHUVA END AS CORRIGIDO
+   FROM DDN_PLUVIOMETRO dp
+       JOIN CFG_CONTROLE_VARIAVEIS_CLIMA ccvc ON (ccvc.COLUNA = 'VL_CHUVA')
+   WHERE dp.CD_ID = 2669296)
+WHERE CD_ID = 2669296;
+
+
+/*
+'UPDATE DDN_PLUVIOMETRO SET ' || r_variavel.COLUNA || ' = (
+   SELECT
+       CASE
+       WHEN dp.' || r_variavel.COLUNA || ' > ccvc.MAX
+           THEN ccvc.MAX
+       WHEN dp.'|| r_variavel.COLUNA || ' < ccvc.MIN
+           THEN ccvc.MIN
+       ELSE dp.' || r_variavel.COLUNA || ' END AS CORRIGIDO
+   FROM DDN_PLUVIOMETRO dp
+       JOIN CFG_CONTROLE_VARIAVEIS_CLIMA ccvc ON (ccvc.COLUNA = ''' || r_variavel.COLUNA || ''')
+   WHERE dp.CD_ID = ' || CD_ID || ')
+WHERE CD_ID = ' || CD_ID;
+*/
+
+/*
+'UPDATE DDN_PLUVIOMETRO SET :coluna = (
+   SELECT
+       CASE
+       WHEN dp.:coluna > ccvc.MAX
+           THEN ccvc.MAX
+       WHEN dp.:coluna < ccvc.MIN
+           THEN ccvc.MIN
+       ELSE dp.:coluna END AS CORRIGIDO
+   FROM DDN_PLUVIOMETRO dp
+       JOIN CFG_CONTROLE_VARIAVEIS_CLIMA ccvc ON (ccvc.COLUNA = '':coluna'')
+   WHERE dp.CD_ID = :id)
+WHERE CD_ID = :id';
+EXECUTE IMMEDIATE vl_template USING r_variavel.COLUNA, r_variavel.COLUNA, r_variavel.COLUNA, r_variavel.COLUNA, r_variavel.COLUNA, CD_ID, CD_ID;
+*/
